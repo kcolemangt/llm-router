@@ -23,15 +23,10 @@ jobs:
       - name: Run tests
         run: go test ./...
 
-  build-and-release:
-    name: Build and Release
+  build:
+    name: Build
     needs: test
-    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    strategy:
-        matrix:
-          os: [windows, linux, darwin]
-          arch: [amd64]
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
@@ -44,29 +39,19 @@ jobs:
       - name: Build binaries
         run: make build
 
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v2
-        with:
-          name: llm-router-binaries
-          path: build/*
-
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref_name }}
-          release_name: Release ${{ github.ref_name }}
-          draft: true
-          prerelease: false
+  release:
+    name: Create Release and Upload Assets
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
 
       - name: Upload Release Assets
-        uses: actions/upload-release-asset@v1
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: build/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./build/*
-          asset_name: llm-router-${{ matrix.os }}-${{ matrix.arch }}
-          asset_content_type: application/octet-stream
