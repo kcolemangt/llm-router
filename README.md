@@ -84,6 +84,58 @@ Provide the necessary API keys via environment variables:
 OPENAI_API_KEY=<YOUR_OPENAI_KEY> GROQ_API_KEY=<YOUR_GROQ_KEY> ./llm-router-darwin-arm64
 ```
 
+## MacOS Permissions
+
+When attempting to run LLM-router on MacOS, you may encounter permissions errors due to MacOS's Gatekeeper security feature. Here are several methods to resolve these issues and successfully launch the application.
+
+### Method 1: Modify Permissions via Terminal
+If you receive a warning about permissions after downloading the release binary, change the file's permissions to make it executable:
+
+```sh
+chmod +x llm-router-darwin-arm64
+./llm-router-darwin-arm64
+```
+
+### Method 2: Use the `spctl` Command
+If the above does not resolve the issue and you still face security pop-ups:
+
+1. Add the application to the allowed list using:
+   ```sh
+   sudo spctl --add llm-router-darwin-arm64
+   ```
+
+2. Attempt to run the application again:
+   ```sh
+   ./llm-router-darwin-arm64
+   ```
+
+### Method 3: Open Directly from Finder
+For issues persisting beyond previous steps:
+
+1. Find `llm-router-darwin-arm64` in Finder.
+2. Control-click on the app icon and select 'Open' from the context menu.
+3. In the dialog that appears, click 'Open'. Admin users may need to authenticate.
+
+This step should register the application as a trusted entity on your Mac, bypassing Gatekeeper on subsequent launches.
+
+### Method 4: Manual Override in System Preferences
+Should the above methods fail:
+
+1. Open System Preferences and navigate to Security & Privacy.
+2. Under the 'General' tab, you may see an 'Allow Anyway' button next to a message about LLM-router.
+3. Click 'Allow Anyway' and try running the application again.
+
+### Method 5: Build from Source
+If none of the above methods work, consider building the application from source:
+
+1. Download the source code.
+2. Ensure you have a current version of [Go](https://go.dev) installed.
+3. Build the application:
+   ```sh
+   make
+   ./build/llm-router-local
+   ```
+
 ## Connect
 
 * X (twitter) [@kcolemangt](https://x.com/kcolemangt)
