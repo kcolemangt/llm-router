@@ -23,8 +23,8 @@ jobs:
       - name: Run tests
         run: go test ./...
 
-  build:
-    name: Build
+  build-and-release:
+    name: Build and Release
     needs: test
     runs-on: ubuntu-latest
     steps:
@@ -39,16 +39,7 @@ jobs:
       - name: Build binaries
         run: make build
 
-  release:
-    name: Create Release and Upload Assets
-    needs: build
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
-
-      - name: Upload Release Assets
+      - name: Create and Upload Release
         uses: softprops/action-gh-release@v2
         with:
           draft: true
