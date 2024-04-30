@@ -1,0 +1,24 @@
+{
+	"listening_port": 11411,
+	"backends": [
+		{
+			"name": "openai",
+			"base_url": "https://api.openai.com",
+			"prefix": "openai/",
+			"default": true,
+			"require_api_key": true
+		},
+		{
+			"name": "ollama",
+			"base_url": "http://localhost:11434",
+			"prefix": "ollama/"
+		},
+		{
+			"name": "groq",
+			"base_url": "https://api.groq.com/openai",
+			"prefix": "groq/",
+			"require_api_key": true,
+			"key_env_var": "GROQ_API_KEY"
+		}
+	]
+}
