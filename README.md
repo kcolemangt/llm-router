@@ -16,10 +16,7 @@ The specific challenges with Cursor include:
 
 LLM-router overcomes these limitations, allowing seamless switching between locally served models like Ollama and external services such as OpenAI and Groq.
 
-<video controls loop autoplay muted>
-  <source src="assets/llm-router-cursor-preview-web.mp4" type="video/mp4">
-  <img src="assets/llm-router-preview.gif" alt="Fallback animation of Ollama in Cursor via LLM-router">
-</video>
+https://github.com/kcolemangt/llm-router/assets/20099734/7220a3ac-11c5-4c89-984a-29d1ea850d10
 
 ## Getting Started
 
