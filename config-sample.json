@@ -1,6 +1,10 @@
 {
 	"listening_port": 11411,
 	"llmrouter_api_key_env": "LLMROUTER_API_KEY",
+	"aliases": {
+		"o1": "groq/deepseek-r1-distill-qwen-32b",
+		"o3-mini": "ollama/qwq"
+	},
 	"backends": [
 		{
 			"name": "openai",
@@ -13,14 +17,23 @@
 		{
 			"name": "ollama",
 			"base_url": "http://localhost:11434/v1",
-			"prefix": "ollama/"
+			"prefix": "ollama/",
+			"role_rewrites": {
+				"developer": "system"
+			}
 		},
 		{
 			"name": "groq",
 			"base_url": "https://api.groq.com/openai/v1",
 			"prefix": "groq/",
 			"require_api_key": true,
-			"key_env_var": "GROQ_API_KEY"
+			"key_env_var": "GROQ_API_KEY",
+			"role_rewrites": {
+				"developer": "system"
+			},
+			"unsupported_params": [
+				"reasoning_effort"
+			]
 		}
 	]
 }

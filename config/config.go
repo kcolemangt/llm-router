@@ -5,6 +5,7 @@ import (
 	"flag"
 	"os"
 
+	"github.com/joho/godotenv"
 	"github.com/kcolemangt/llm-router/model"
 	"github.com/kcolemangt/llm-router/utils"
 	"go.uber.org/zap"
@@ -12,6 +13,15 @@ import (
 
 // LoadConfig loads the configuration from the specified file or from a default if the file cannot be read.
 func LoadConfig(configFile, llmRouterAPIKeyEnv, llmRouterAPIKey string, listeningPort int, defaultConfig model.Config, logger *zap.Logger) (*model.Config, error) {
+	// Load environment variables from .env file if it exists
+	// We use godotenv's Load function which respects the precedence where existing environment
+	// variables take priority over values defined in the .env file
+	if err := godotenv.Load(); err != nil {
+		logger.Debug("No .env file found or unable to load it, continuing with system environment variables", zap.Error(err))
+	} else {
+		logger.Info(".env file loaded successfully")
+	}
+
 	// Start of configuration loading
 	logger.Info("Starting configuration loading", zap.String("configFile", configFile))
 
