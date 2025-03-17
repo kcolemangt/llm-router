@@ -48,9 +48,9 @@ ngrok http 11411
 
 5. Define your preferred models in Cursor using the appropriate prefixes:
 ```
-ollama/phi3
-openai/gpt-4-turbo
-groq/llama3-70b-8192
+ollama/phi4
+openai/gpt-4o-mini
+groq/deepseek-r1-distill-llama-70b-specdec
 ```
 
 ⚠️ **Important Warning**: When clicking "Verify", Cursor randomly selects one of your enabled models to test the connection. Make sure to **uncheck any models** in Cursor's model list that aren't provided by the backends configured in your `config.json`. Otherwise, verification may fail if Cursor tries to test a model that's not available through your LLM-router.
@@ -62,6 +62,10 @@ Here is an example of how to configure Groq, Ollama, and OpenAI backends in `con
 {
 	"listening_port": 11411,
 	"llmrouter_api_key_env": "LLMROUTER_API_KEY",
+	"aliases": {
+		"o1": "groq/deepseek-r1-distill-qwen-32b",
+		"o3-mini": "ollama/qwq"
+	},
 	"backends": [
 		{
 			"name": "openai",
@@ -74,20 +78,129 @@ Here is an example of how to configure Groq, Ollama, and OpenAI backends in `con
 		{
 			"name": "ollama",
 			"base_url": "http://localhost:11434/v1",
-			"prefix": "ollama/"
+			"prefix": "ollama/",
+			"role_rewrites": {
+				"developer": "system"
+			}
 		},
 		{
 			"name": "groq",
 			"base_url": "https://api.groq.com/openai/v1",
 			"prefix": "groq/",
 			"require_api_key": true,
-			"key_env_var": "GROQ_API_KEY"
+			"key_env_var": "GROQ_API_KEY",
+			"role_rewrites": {
+				"developer": "system"
+			}
+		}
+	]
+}
+
+```
+
+In this configuration, OpenAI serves as the default backend, allowing you to use model identifiers like `openai/gpt-4o-mini` or simply `gpt-4o-mini`. Models on Ollama and Groq, however, must be prefixed with `ollama/` and `groq/` respectively. This configuration also causes Cursor to send optimized reasoning prompts to Groq's `deepseek-r1-distill-llama-70b-specdec` model and the local Ollama `qwq` model.
+
+### Optimizing for Reasoning Models and Prompt Techniques
+
+Clients such as Cursor send specialized prompts to specific models recognized for enhanced reasoning performance. Usually, these optimized prompts target proprietary models. The **Model Aliases** and **Role Rewrites** features in LLM-router allow you to extend these optimizations to reasoning-oriented models hosted locally (such as via Ollama) or by alternative providers (like Groq).
+
+By combining aliases and role rewrites, you can route optimized reasoning prompts effectively across different backend models.
+
+#### Model Aliases
+
+Aliases allow mapping specific client-recognized reasoning model identifiers to backend models of your choice. This causes Cursor and similar clients to use specialized reasoning prompts designed for those models.
+
+Simple example:
+
+```json
+"aliases": {
+    "o1": "groq/deepseek-r1-distill-llama-70b-specdec"
+}
+```
+
+In this example:
+- Cursor sends prompts optimized for OpenAI's `o1`, but LLM-router redirects these requests to Groq's reasoning-focused model `deepseek-r1-distill-llama-70b-specdec`.
+- The Groq backend benefits from Cursor's specialized reasoning prompts originally intended for `gpt-4-turbo`.
+
+#### Role Rewrites
+
+Role rewrites ensure that message roles from clients are correctly translated to match backend provider expectations. Clients using specialized reasoning prompts often use custom roles (e.g., `developer`) that may not be recognized universally.
+
+Simple example:
+
+```json
+"role_rewrites": {
+    "developer": "system"
+}
+```
+
+- Messages with the role `developer` from Cursor will be rewritten to the standard role `system`, ensuring compatibility with backends.
+
+#### Unsupported Parameters
+
+Each model provider may support different parameters in their API requests. The `unsupported_params` option allows you to specify parameters that should be automatically removed from requests before forwarding them to specific backends, preventing errors due to incompatible parameters.
+
+Simple example:
+
+```json
+"unsupported_params": [
+    "reasoning_effort"
+]
+```
+
+In this example:
+- The parameter `reasoning_effort` will be automatically removed from requests before forwarding to this backend.
+- This is particularly useful when aliases direct Cursor-optimized prompts (which may include provider-specific parameters) to different backends that don't support those parameters.
+
+#### Combined Example: Aliases, Role Rewrites, and Unsupported Parameters
+
+Here's a complete configuration example illustrating how these features are used together:
+
+```json
+{
+	"listening_port": 11411,
+	"llmrouter_api_key_env": "LLMROUTER_API_KEY",
+	"aliases": {
+		"o1": "groq/deepseek-r1-distill-qwen-32b",
+		"o3-mini": "ollama/qwq"
+	},
+	"backends": [
+		{
+			"name": "groq",
+			"base_url": "https://api.groq.com/openai/v1",
+			"prefix": "groq/",
+			"require_api_key": true,
+			"key_env_var": "GROQ_API_KEY",
+			"role_rewrites": {
+				"developer": "system"
+			},
+			"unsupported_params": [
+				"reasoning_effort"
+			]
+		},
+		{
+			"name": "ollama",
+			"base_url": "http://localhost:11434/v1",
+			"prefix": "ollama/",
+			"role_rewrites": {
+				"developer": "system"
+			}
 		}
 	]
 }
 ```
 
-In this configuration, OpenAI serves as the default backend, allowing you to use model identifiers like `openai/gpt-4-turbo` or simply `gpt-4-turbo`. Models on Ollama and Groq, however, must be prefixed with `ollama/` and `groq/` respectively.
+In this configuration:
+- Requests to `o1` from Cursor go to Groq's reasoning-oriented model `deepseek-r1-distill-llama-70b-specdec`.
+- Requests to `o3-mini` go to the local Ollama model `qwq`.
+- Both backends use role rewriting to map Cursor's custom `developer` role to the standard `system` role.
+- The Groq backend drops the `reasoning_effort` parameter, which is not supported by Groq's API.
+
+#### Additional Uses
+
+These features are not limited to reasoning models. They can be applied broadly to facilitate compatibility and optimal prompting strategies across various model types and backend configurations.
+
+### API Keys
 
 Provide the necessary API keys via environment variables:
 ```sh
@@ -103,6 +216,25 @@ Alternatively, you can use the command-line flag:
 ```sh
 ./llm-router-darwin-arm64 --llmrouter-api-key=your_custom_key
 ```
+
+#### Using .env Files
+
+You can also store your API keys and other configuration in a `.env` file in the same directory as LLM-router. This is recommended to avoid exposing sensitive keys in your shell history or environment.
+
+1. Create a `.env` file by copying the provided example:
+```sh
+cp .env.example .env
+```
+
+2. Edit the `.env` file with your API keys:
+```sh
+# LLM-Router configuration
+LLMROUTER_API_KEY=your_llmrouter_api_key_here
+OPENAI_API_KEY=your_openai_api_key_here
+GROQ_API_KEY=your_groq_api_key_here
+```
+
+LLM-router will automatically load variables from this file at startup. Environment variables that are already set will take precedence over those in the `.env` file, following standard precedence rules.
 
 ## Details
 

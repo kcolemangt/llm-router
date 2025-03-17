@@ -145,3 +145,55 @@ func TestGeneratedAPIKey(t *testing.T) {
 		t.Errorf("Expected UseGeneratedKey to be true for generated keys")
 	}
 }
+
+func TestDotEnvLoading(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	defaultConfig := model.Config{
+		LLMRouterAPIKeyEnv: "ENV_TEST_KEY",
+	}
+
+	// Create a temporary .env file
+	tmpDir := t.TempDir()
+	envFilePath := filepath.Join(tmpDir, ".env")
+	err := os.WriteFile(envFilePath, []byte("ENV_TEST_KEY=from_dotenv\nTEST_VARIABLE=test_value"), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temporary .env file: %s", err)
+	}
+
+	// Set the working directory to the temporary directory
+	originalWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get current working directory: %s", err)
+	}
+	defer os.Chdir(originalWd) // Restore the original working directory
+
+	err = os.Chdir(tmpDir)
+	if err != nil {
+		t.Fatalf("Failed to change working directory: %s", err)
+	}
+
+	// Case 1: Test loading from .env file when no environment variable is set
+	os.Unsetenv("ENV_TEST_KEY")
+	config, err := LoadConfig("nonexistent_config.json", "ENV_TEST_KEY", "", 0, defaultConfig, logger)
+	if err != nil {
+		t.Errorf("Failed to load config with .env file: %s", err)
+	}
+
+	if config.LLMRouterAPIKey != "from_dotenv" {
+		t.Errorf("Expected LLMRouterAPIKey 'from_dotenv', got '%s'", config.LLMRouterAPIKey)
+	}
+
+	// Case 2: Test precedence where environment variable overrides .env file
+	os.Setenv("ENV_TEST_KEY", "from_environment")
+	config, err = LoadConfig("nonexistent_config.json", "ENV_TEST_KEY", "", 0, defaultConfig, logger)
+	if err != nil {
+		t.Errorf("Failed to load config with environment override: %s", err)
+	}
+
+	if config.LLMRouterAPIKey != "from_environment" {
+		t.Errorf("Expected LLMRouterAPIKey 'from_environment', got '%s'", config.LLMRouterAPIKey)
+	}
+
+	// Clean up
+	os.Unsetenv("ENV_TEST_KEY")
+}

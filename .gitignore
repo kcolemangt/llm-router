@@ -22,3 +22,6 @@ go.work
 
 build/
 config.json
+
+# Environment Variables
+.env

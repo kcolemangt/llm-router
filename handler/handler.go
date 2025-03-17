@@ -113,7 +113,7 @@ func HandleRequest(cfg *model.Config, w http.ResponseWriter, r *http.Request) {
 
 	// Process specific API endpoint logic if applicable
 	if r.URL.Path == "/chat/completions" && r.Method == "POST" {
-		handleChatCompletions(recorder, r, cfg.Logger)
+		handleChatCompletions(recorder, r, cfg)
 
 		// Log the response
 		logResponse(cfg.Logger, recorder)
@@ -137,7 +137,7 @@ func logResponse(logger *zap.Logger, recorder *utils.ResponseRecorder) {
 }
 
 // handleChatCompletions processes specific logic for the chat completions endpoint
-func handleChatCompletions(w http.ResponseWriter, r *http.Request, logger *zap.Logger) {
+func handleChatCompletions(w http.ResponseWriter, r *http.Request, cfg *model.Config) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Error reading request body", http.StatusInternalServerError)
@@ -156,12 +156,67 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request, logger *zap.L
 		return
 	}
 
+	logger := cfg.Logger
 	logger.Info("Incoming request for model", zap.String("model", modelName))
+
+	// Check for model aliases
+	if cfg.Aliases != nil {
+		if aliasTarget, exists := cfg.Aliases[modelName]; exists {
+			logger.Info("Applying model alias",
+				zap.String("originalModel", modelName),
+				zap.String("aliasTarget", aliasTarget))
+			modelName = aliasTarget
+			chatReq["model"] = modelName
+		}
+	}
 
 	for prefix, proxy := range proxy.Proxies {
 		if strings.HasPrefix(modelName, prefix) {
 			newModelName := strings.TrimPrefix(modelName, prefix)
 			chatReq["model"] = newModelName
+
+			// Apply role rewrites for the selected backend if available
+			var selectedBackend model.BackendConfig
+			for _, backend := range cfg.Backends {
+				if strings.TrimSpace(backend.Prefix) == prefix {
+					selectedBackend = backend
+					break
+				}
+			}
+
+			// Apply role rewrites if configured for this backend
+			if selectedBackend.RoleRewrites != nil && len(selectedBackend.RoleRewrites) > 0 {
+				// Check if there are messages to rewrite
+				if messages, ok := chatReq["messages"].([]interface{}); ok {
+					for i, msg := range messages {
+						if msgMap, ok := msg.(map[string]interface{}); ok {
+							if role, ok := msgMap["role"].(string); ok {
+								// Check if this role needs to be rewritten
+								if newRole, exists := selectedBackend.RoleRewrites[role]; exists {
+									logger.Info("Rewriting message role",
+										zap.String("originalRole", role),
+										zap.String("newRole", newRole))
+									msgMap["role"] = newRole
+									messages[i] = msgMap
+								}
+							}
+						}
+					}
+					chatReq["messages"] = messages
+				}
+			}
+
+			// Remove unsupported parameters if configured for this backend
+			if selectedBackend.UnsupportedParams != nil && len(selectedBackend.UnsupportedParams) > 0 {
+				for _, param := range selectedBackend.UnsupportedParams {
+					if _, exists := chatReq[param]; exists {
+						logger.Info("Dropping unsupported parameter",
+							zap.String("parameter", param))
+						delete(chatReq, param)
+					}
+				}
+			}
+
 			modifiedBody, err := json.Marshal(chatReq)
 			if err != nil {
 				http.Error(w, "Error re-marshalling request body", http.StatusInternalServerError)

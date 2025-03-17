@@ -32,6 +32,7 @@ func main() {
 			},
 		},
 		LLMRouterAPIKeyEnv: "LLMROUTER_API_KEY",
+		Aliases:            make(map[string]string),
 	}
 
 	// Initialize command-line flags

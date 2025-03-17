@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented here.
 
+## [0.2.0] - 2025-03-17
+
+### Added
+- Support for sending optimized reasoning prompts to local and alternative model providers via model aliasing and role rewriting:
+  - Model aliases allow remapping client-recognized reasoning models to your chosen backend models.
+  - Role rewrites enable client-specific roles to be translated into backend-compatible roles, ensuring prompt compatibility across providers.
+- Support for loading environment variables from `.env` files using godotenv:
+  - Automatically loads variables from `.env` file in the current directory.
+  - Follows standard precedence rules where manually set environment variables take priority over `.env` values.
+  - Simplifies configuration without exposing sensitive API keys in your shell history.
+
 ## [0.1.0] - 2025-03-17
 
 ### Added

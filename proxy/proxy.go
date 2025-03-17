@@ -88,14 +88,6 @@ func (t *debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 
-	// Log all response headers from backend (at debug level)
-	t.logger.Debug("Response headers from backend")
-	for name, values := range resp.Header {
-		t.logger.Debug("Response header",
-			zap.String("name", name),
-			zap.String("value", strings.Join(values, ", ")))
-	}
-
 	// Check if this is a streaming response
 	isStreaming := false
 	if resp != nil {
