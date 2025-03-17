@@ -65,7 +65,7 @@ Here is an example of how to configure Groq, Ollama, and OpenAI backends in `con
 	"backends": [
 		{
 			"name": "openai",
-			"base_url": "https://api.openai.com",
+			"base_url": "https://api.openai.com/v1",
 			"prefix": "openai/",
 			"default": true,
 			"require_api_key": true,
@@ -73,12 +73,12 @@ Here is an example of how to configure Groq, Ollama, and OpenAI backends in `con
 		},
 		{
 			"name": "ollama",
-			"base_url": "http://localhost:11434",
+			"base_url": "http://localhost:11434/v1",
 			"prefix": "ollama/"
 		},
 		{
 			"name": "groq",
-			"base_url": "https://api.groq.com/openai",
+			"base_url": "https://api.groq.com/openai/v1",
 			"prefix": "groq/",
 			"require_api_key": true,
 			"key_env_var": "GROQ_API_KEY"
