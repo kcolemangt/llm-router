@@ -14,9 +14,10 @@ type BackendConfig struct {
 
 // Config is the structure for the proxy configuration
 type Config struct {
-	ListeningPort   int `json:"listening_port"`
-	Logger          *zap.Logger
-	Backends        []BackendConfig `json:"backends"`
-	GlobalAPIKeyEnv string          `json:"global_api_key_env"`
-	GlobalAPIKey    string
+	ListeningPort      int `json:"listening_port"`
+	Logger             *zap.Logger
+	Backends           []BackendConfig `json:"backends"`
+	LLMRouterAPIKeyEnv string          `json:"llmrouter_api_key_env"`
+	LLMRouterAPIKey    string
+	UseGeneratedKey    bool
 }

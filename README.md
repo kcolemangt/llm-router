@@ -20,46 +20,56 @@ https://github.com/kcolemangt/llm-router/assets/20099734/7220a3ac-11c5-4c89-984a
 
 ## Getting Started
 
-1. Launch LLM-router to manage API requests across multiple backends:
-```sh
-OPENAI_API_KEY=<YOUR_OPENAI_KEY> ./llm-router-darwin-arm64
-```
+1. Create your configuration file:
+   - A sample configuration file `config-sample.json` is provided in the repository
+   - Either rename this file to `config.json` or create a new `config.json` file using the example below
+   - This file defines which LLM backends are available and how to route to them
 
-2. Launch [ngrok](https://ngrok.com) to create a public HTTPS endpoint for your LLM-router:
+2. Launch LLM-router to manage API requests across multiple backends:
+```sh
+./llm-router-darwin-arm64
+```
+   - If you haven't set a `LLMROUTER_API_KEY` environment variable, the program will generate a random strong API key
+   - **Copy this API key** as you'll need it for Cursor's configuration
+
+3. Launch [ngrok](https://ngrok.com) to create a public HTTPS endpoint for your LLM-router:
 ```sh
 ngrok http 11411
 ```
+   - Take note of the HTTPS URL provided by ngrok (e.g., `https://xxxx.ngrok-free.app`)
 
-Configure the `Override OpenAI Base URL` in Cursor's model settings to point to your ngrok address appended with `/v1`:
-```
-https://xxxx.ngrok-free.app/v1
-```
+4. Configure Cursor to use your LLM-router:
+   - Open Cursor's settings and go to the "Models" section
+   - Paste the LLM-router API key (from step 2) into the "OpenAI API Key" field
+   - Click the dropdown beneath the API key field labeled "Override OpenAI Base URL (when using key)"
+   - Enter your ngrok URL (from step 3) in this field
+   - Click the "Save" button next to this field
+   - Click the "Verify" button next to the API key field to confirm the connection
 
-Define your preferred models:
+5. Define your preferred models in Cursor using the appropriate prefixes:
 ```
 ollama/phi3
-ollama/llama3:70b
+openai/gpt-4-turbo
+groq/llama3-70b-8192
 ```
 
-## Details
+⚠️ **Important Warning**: When clicking "Verify", Cursor randomly selects one of your enabled models to test the connection. Make sure to **uncheck any models** in Cursor's model list that aren't provided by the backends configured in your `config.json`. Otherwise, verification may fail if Cursor tries to test a model that's not available through your LLM-router.
 
-Routes `chat/completions` API requests to any OpenAI-compatible LLM backend based on the model's prefix. Streaming is supported.
-
-LLM-router can be set up to use individual API keys for each backend, or no key for services like local Ollama.
-
-By default, requests to LLM-router are secured with your `OPENAI_API_KEY` as Cursor already includes this with every request.
+## Configuration
 
 Here is an example of how to configure Groq, Ollama, and OpenAI backends in `config.json`:
 ```json
 {
 	"listening_port": 11411,
+	"llmrouter_api_key_env": "LLMROUTER_API_KEY",
 	"backends": [
 		{
 			"name": "openai",
 			"base_url": "https://api.openai.com",
 			"prefix": "openai/",
 			"default": true,
-			"require_api_key": true
+			"require_api_key": true,
+			"key_env_var": "OPENAI_API_KEY"
 		},
 		{
 			"name": "ollama",
@@ -83,6 +93,24 @@ Provide the necessary API keys via environment variables:
 ```sh
 OPENAI_API_KEY=<YOUR_OPENAI_KEY> GROQ_API_KEY=<YOUR_GROQ_KEY> ./llm-router-darwin-arm64
 ```
+
+If you wish to specify your own LLM-router API key instead of using a generated one:
+```sh
+LLMROUTER_API_KEY=your_custom_key GROQ_API_KEY=<YOUR_GROQ_KEY> ./llm-router-darwin-arm64
+```
+
+Alternatively, you can use the command-line flag:
+```sh
+./llm-router-darwin-arm64 --llmrouter-api-key=your_custom_key
+```
+
+## Details
+
+Routes `chat/completions` API requests to any OpenAI-compatible LLM backend based on the model's prefix. Streaming is supported.
+
+LLM-router can be set up to use individual API keys for each backend, or no key for services like local Ollama.
+
+Requests to LLM-router are secured with your `LLMROUTER_API_KEY` which you set in Cursor's OpenAI API Key field. This key is used to authenticate requests to your LLM-router, while the backend-specific API keys (like GROQ_API_KEY) are used by LLM-router to authenticate with the respective API providers.
 
 ## MacOS Permissions
 
