@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented here.
 
+## [0.2.1] - 2025-03-25
+
+### Fixed
+- Enhanced streaming response handling and proxy error management
+- Improved Content-Length handling and response logging
+
 ## [0.2.0] - 2025-03-17
 
 ### Added
