@@ -156,15 +156,28 @@ func (t *debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// Clone the response body for logging, preserving streaming if needed
 	var respBodyStr string
 	if resp.Body != nil {
+		// For streaming, use our enhanced DrainAndCapture function that maintains proper streaming
 		resp.Body, respBodyStr = utils.DrainAndCapture(resp.Body, isStreaming)
 	}
 
 	// Log request and response details, being careful with streaming content
 	if isStreaming {
-		t.logger.Debug("Streaming response detected - logging headers only",
+		t.logger.Debug("Streaming response detected",
 			zap.Int("status", resp.StatusCode),
 			zap.String("contentType", resp.Header.Get("Content-Type")),
 			zap.String("transferEncoding", resp.Header.Get("Transfer-Encoding")))
+
+		// Log the headers separately
+		for name, values := range resp.Header {
+			t.logger.Debug("Response header",
+				zap.String("name", name),
+				zap.String("value", strings.Join(values, ", ")))
+		}
+
+		// Log a preview of the response content, even for streaming
+		if len(respBodyStr) > 0 {
+			t.logger.Debug("Streaming response preview", zap.String("content", respBodyStr))
+		}
 	} else {
 		utils.LogRequestResponse(t.logger, req, resp, reqBodyStr, respBodyStr)
 	}
