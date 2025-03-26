@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -34,7 +35,12 @@ func DrainBody(body io.ReadCloser) (io.ReadCloser, string) {
 		return nil, ""
 	}
 
-	bodyBytes, _ := io.ReadAll(body)
+	bodyBytes, err := io.ReadAll(body)
+	if err != nil {
+		// If we can't read the body, return the original and an error message
+		return body, fmt.Sprintf("Error reading body: %v", err)
+	}
+
 	// Create new ReadClosers for the drained body
 	return io.NopCloser(bytes.NewBuffer(bodyBytes)), formatJSON(bodyBytes)
 }
@@ -92,6 +98,9 @@ type ResponseRecorder struct {
 	StatusCode int
 	Body       bytes.Buffer
 	streaming  bool
+	// Add a flag to limit the captured size for very large responses
+	maxCaptureSize int
+	capturedSize   int
 }
 
 // NewResponseRecorder creates a new ResponseRecorder
@@ -100,6 +109,8 @@ func NewResponseRecorder(w http.ResponseWriter) *ResponseRecorder {
 		ResponseWriter: w,
 		StatusCode:     http.StatusOK, // Default status code
 		streaming:      false,
+		maxCaptureSize: 1024 * 1024, // 1MB max capture size for logging (configurable)
+		capturedSize:   0,
 	}
 }
 
@@ -115,23 +126,30 @@ func (r *ResponseRecorder) WriteHeader(statusCode int) {
 
 // Write captures the response body and passes it to the underlying ResponseWriter
 func (r *ResponseRecorder) Write(b []byte) (int, error) {
-	// For streaming responses, just pass through without buffering everything
-	if r.streaming {
-		n, err := r.ResponseWriter.Write(b)
-		if err == nil && n > 0 {
-			// Log a sample of the response (first 100 chars max)
-			sample := string(b)
-			if len(sample) > 100 {
-				sample = sample[:100] + "..."
+	// Write to the underlying ResponseWriter first
+	n, err := r.ResponseWriter.Write(b)
+
+	// If successful and we haven't exceeded our capture limit, record for logging
+	if err == nil && n > 0 && r.capturedSize < r.maxCaptureSize {
+		// Calculate how much we can safely add to our buffer
+		remainingCapacity := r.maxCaptureSize - r.capturedSize
+		if remainingCapacity > 0 {
+			toCapture := b
+			if len(b) > remainingCapacity {
+				toCapture = b[:remainingCapacity]
 			}
-			r.Body.WriteString(sample)
+
+			bytesWritten, _ := r.Body.Write(toCapture)
+			r.capturedSize += bytesWritten
+
+			// If we hit the limit, add a note
+			if r.capturedSize >= r.maxCaptureSize && len(b) > remainingCapacity {
+				r.Body.WriteString("\n... [response truncated for logging, exceeded 1MB] ...")
+			}
 		}
-		return n, err
 	}
 
-	// For non-streaming responses, buffer the entire body
-	r.Body.Write(b)
-	return r.ResponseWriter.Write(b)
+	return n, err
 }
 
 // Flush implements the http.Flusher interface to support streaming responses
@@ -146,33 +164,119 @@ func (r *ResponseRecorder) Header() http.Header {
 	return r.ResponseWriter.Header()
 }
 
-// GetBody returns the captured response body as a string
+// GetBody returns the captured response body as a string, with special handling for SSE
 func (r *ResponseRecorder) GetBody() string {
-	return formatJSON(r.Body.Bytes())
+	if !r.streaming {
+		return formatJSON(r.Body.Bytes())
+	}
+
+	// For streaming responses (SSE), try to reassemble the content in a more readable way
+	content := r.Body.String()
+
+	// Check if this is an SSE response with delta content (like OpenAI/Anthropic/etc)
+	if strings.Contains(content, "data: {") && strings.Contains(content, "delta") {
+		// Attempt to extract and combine content from stream
+		var reassembledContent strings.Builder
+		reassembledContent.WriteString("STREAMING RESPONSE (REASSEMBLED):\n")
+
+		// Split by data: lines
+		for _, line := range strings.Split(content, "data: ") {
+			line = strings.TrimSpace(line)
+			if line == "" || line == "[DONE]" {
+				continue
+			}
+
+			// Extract content from the delta if possible
+			if strings.HasPrefix(line, "{") {
+				var jsonObj map[string]interface{}
+				if err := json.Unmarshal([]byte(line), &jsonObj); err == nil {
+					if choices, ok := jsonObj["choices"].([]interface{}); ok && len(choices) > 0 {
+						if choice, ok := choices[0].(map[string]interface{}); ok {
+							if delta, ok := choice["delta"].(map[string]interface{}); ok {
+								if content, ok := delta["content"].(string); ok && content != "" {
+									reassembledContent.WriteString(content)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// If we successfully extracted content, return it
+		if reassembledContent.Len() > 25 { // More than just the header
+			return reassembledContent.String()
+		}
+	}
+
+	// If we couldn't reassemble or it's not delta content, return the raw content
+	return "STREAMING CONTENT:\n" + content
 }
 
 // DrainAndCapture reads body content and returns it as both ReadCloser and string,
-// but for streaming responses, only samples the beginning without reading everything
+// but for streaming responses, samples more content without breaking the stream
 func DrainAndCapture(body io.ReadCloser, isStreaming bool) (io.ReadCloser, string) {
 	if body == nil {
 		return nil, ""
 	}
 
-	// For streaming content, just peek at the beginning
+	// For streaming content, peek with a larger buffer
 	if isStreaming {
-		// Read only first 1KB to avoid breaking the stream
-		peeked := make([]byte, 1024)
-		n, _ := body.Read(peeked)
+		// Increase buffer size to 8KB to capture more of the stream
+		peeked := make([]byte, 8*1024)
+		n, err := body.Read(peeked)
+		if err != nil && err != io.EOF {
+			// If we can't read the body, return the original and an error message
+			return body, fmt.Sprintf("Error peeking at streaming body: %v", err)
+		}
+
 		if n > 0 {
 			peeked = peeked[:n]
 			combinedReader := io.MultiReader(bytes.NewReader(peeked), body)
+
+			// Try to parse and pretty-format the streamed content
+			content := string(peeked)
+			if strings.Contains(content, "data: {") && strings.Contains(content, "delta") {
+				var builder strings.Builder
+				builder.WriteString("STREAMING DATA (SAMPLE):\n")
+
+				// Process the stream events we've captured so far
+				for _, line := range strings.Split(content, "data: ") {
+					line = strings.TrimSpace(line)
+					if line == "" || line == "[DONE]" {
+						continue
+					}
+
+					// Try to extract and format the delta content
+					if strings.HasPrefix(line, "{") {
+						var jsonObj map[string]interface{}
+						if err := json.Unmarshal([]byte(line), &jsonObj); err == nil {
+							prettyJSON, _ := json.MarshalIndent(jsonObj, "", "  ")
+							builder.WriteString("--EVENT--\n")
+							builder.Write(prettyJSON)
+							builder.WriteString("\n")
+						} else {
+							builder.WriteString(line)
+							builder.WriteString("\n")
+						}
+					}
+				}
+
+				return io.NopCloser(combinedReader), builder.String()
+			}
+
 			return io.NopCloser(combinedReader), "STREAMING: " + formatJSON(peeked) + "..."
 		}
-		return body, "STREAMING CONTENT"
+		return body, "STREAMING CONTENT (empty or could not be sampled)"
 	}
 
 	// For non-streaming content, buffer everything
-	bodyBytes, _ := io.ReadAll(body)
+	bodyBytes, err := io.ReadAll(body)
+	if err != nil {
+		// If we can't read the body, return the original and an error message
+		return body, fmt.Sprintf("Error reading body: %v", err)
+	}
+
 	return io.NopCloser(bytes.NewBuffer(bodyBytes)), formatJSON(bodyBytes)
 }
 

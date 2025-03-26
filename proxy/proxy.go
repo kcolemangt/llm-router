@@ -1,12 +1,16 @@
 package proxy
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/kcolemangt/llm-router/model"
 	"github.com/kcolemangt/llm-router/utils"
@@ -29,18 +33,45 @@ func InitializeProxies(backends []model.BackendConfig, logger *zap.Logger) {
 			logger.Fatal("Error parsing URL for backend", zap.String("backend", backend.Name), zap.Error(err))
 		}
 
+		// Create a proxy with standard settings
 		proxy := httputil.NewSingleHostReverseProxy(urlParsed)
+
+		// Set up our custom director
 		proxy.Director = makeDirector(urlParsed, backend, logger)
 
-		// Add custom transport to log responses
-		originalTransport := http.DefaultTransport
+		// Configure error handler to provide better error messages
+		proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, err error) {
+			logger.Error("Proxy error",
+				zap.String("backend", backend.Name),
+				zap.String("url", req.URL.String()),
+				zap.Error(err))
+
+			// Return a proper error to the client
+			http.Error(rw, fmt.Sprintf("Error communicating with backend service: %v", err), http.StatusBadGateway)
+		}
+
+		// Add custom transport to log requests/responses
+		originalTransport := http.DefaultTransport.(*http.Transport).Clone()
+
+		// Adjust transport timeouts
+		originalTransport.ResponseHeaderTimeout = 30 * time.Second
+		originalTransport.TLSHandshakeTimeout = 10 * time.Second
+		originalTransport.ExpectContinueTimeout = 5 * time.Second
+		originalTransport.MaxIdleConns = 100
+		originalTransport.MaxConnsPerHost = 20
+		originalTransport.MaxIdleConnsPerHost = 10
+
+		// Wrap transport in our debug transport for logging
 		proxy.Transport = &debugTransport{
 			transport: originalTransport,
 			logger:    logger,
 			backend:   backend.Name,
 		}
 
+		// Add to our proxies map
 		Proxies[strings.TrimSpace(backend.Prefix)] = proxy
+
+		// Set default if configured
 		if backend.Default {
 			DefaultProxy = proxy
 			logger.Debug("Default proxy set", zap.String("backend", backend.Name))
@@ -57,17 +88,41 @@ type debugTransport struct {
 
 // RoundTrip implements the http.RoundTripper interface
 func (t *debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	// Clone the request body for logging
+	// Clone the request body for logging without altering the original request
 	var reqBodyStr string
+	var bodyBytes []byte
 	if req.Body != nil {
-		req.Body, reqBodyStr = utils.DrainBody(req.Body)
+		// Read the body
+		bodyBytes, _ = io.ReadAll(req.Body)
+		// Recreate the body exactly as it was
+		req.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+		// Format for logging only
+		var prettyJSON bytes.Buffer
+		if err := json.Indent(&prettyJSON, bodyBytes, "", "  "); err == nil {
+			reqBodyStr = prettyJSON.String()
+		} else {
+			reqBodyStr = string(bodyBytes)
+		}
+
+		// Let Go's http client handle Content-Length automatically
+		// This is the most reliable way to ensure proper request transmission
+		if len(bodyBytes) > 0 {
+			req.ContentLength = int64(len(bodyBytes))
+		} else {
+			req.ContentLength = 0
+		}
 	}
 
-	// Log the full request if debug is enabled
+	// Disable compression to make logs easier to read
+	req.Header.Del("Accept-Encoding")
+
+	// Log the full request
 	t.logger.Debug("Outgoing request to backend",
 		zap.String("backend", t.backend),
 		zap.String("method", req.Method),
-		zap.String("url", req.URL.String()))
+		zap.String("url", req.URL.String()),
+		zap.Int64("content-length", req.ContentLength))
 
 	// Log all headers being sent to backend (at debug level)
 	for name, values := range req.Header {
@@ -101,15 +156,28 @@ func (t *debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// Clone the response body for logging, preserving streaming if needed
 	var respBodyStr string
 	if resp.Body != nil {
+		// For streaming, use our enhanced DrainAndCapture function that maintains proper streaming
 		resp.Body, respBodyStr = utils.DrainAndCapture(resp.Body, isStreaming)
 	}
 
 	// Log request and response details, being careful with streaming content
 	if isStreaming {
-		t.logger.Debug("Streaming response detected - logging headers only",
+		t.logger.Debug("Streaming response detected",
 			zap.Int("status", resp.StatusCode),
 			zap.String("contentType", resp.Header.Get("Content-Type")),
 			zap.String("transferEncoding", resp.Header.Get("Transfer-Encoding")))
+
+		// Log the headers separately
+		for name, values := range resp.Header {
+			t.logger.Debug("Response header",
+				zap.String("name", name),
+				zap.String("value", strings.Join(values, ", ")))
+		}
+
+		// Log a preview of the response content, even for streaming
+		if len(respBodyStr) > 0 {
+			t.logger.Debug("Streaming response preview", zap.String("content", respBodyStr))
+		}
 	} else {
 		utils.LogRequestResponse(t.logger, req, resp, reqBodyStr, respBodyStr)
 	}
@@ -123,11 +191,28 @@ func makeDirector(urlParsed *url.URL, backend model.BackendConfig, logger *zap.L
 		originalHost := req.Host
 		originalPath := req.URL.Path
 
+		// Store original request body if needed for modifications later
+		var bodyBytes []byte
+		if req.Body != nil && req.Method != "GET" {
+			bodyBytes, _ = io.ReadAll(req.Body)
+			req.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+		}
+
 		// Set target host and URL
 		req.Host = urlParsed.Host
 		req.URL.Scheme = urlParsed.Scheme
 		req.URL.Host = urlParsed.Host
-		req.URL.Path = urlParsed.Path + originalPath
+
+		// Create proper path by joining base path with original path
+		if strings.HasSuffix(urlParsed.Path, "/") && strings.HasPrefix(originalPath, "/") {
+			// Avoid double slashes
+			req.URL.Path = urlParsed.Path + originalPath[1:]
+		} else if !strings.HasSuffix(urlParsed.Path, "/") && !strings.HasPrefix(originalPath, "/") {
+			// Add slash when needed
+			req.URL.Path = urlParsed.Path + "/" + originalPath
+		} else {
+			req.URL.Path = urlParsed.Path + originalPath
+		}
 
 		// Log the modifications to the request URL and Host
 		logger.Info("Modified request URL and Host",
@@ -137,9 +222,6 @@ func makeDirector(urlParsed *url.URL, backend model.BackendConfig, logger *zap.L
 			zap.String("newPath", req.URL.Path),
 		)
 
-		// Set standard proxy headers
-		req.Header.Set("Host", urlParsed.Host)
-
 		// Extract client IP from RemoteAddr properly
 		clientIP := req.RemoteAddr
 		if idx := strings.LastIndex(clientIP, ":"); idx != -1 {
@@ -148,7 +230,17 @@ func makeDirector(urlParsed *url.URL, backend model.BackendConfig, logger *zap.L
 		clientIP = strings.Trim(clientIP, "[]")
 
 		// Set standard proxy headers
-		req.Header.Set("X-Real-IP", clientIP)
+		// Note: We're setting these headers after clearing any existing ones to avoid duplication
+		standardHeaders := map[string]string{
+			"Host":              urlParsed.Host,
+			"X-Real-IP":         clientIP,
+			"X-Forwarded-Proto": "https",
+			"X-Forwarded-Host":  originalHost,
+		}
+
+		for name, value := range standardHeaders {
+			req.Header.Set(name, value)
+		}
 
 		// Handle X-Forwarded-For
 		if xff := req.Header.Get("X-Forwarded-For"); xff != "" {
@@ -156,12 +248,6 @@ func makeDirector(urlParsed *url.URL, backend model.BackendConfig, logger *zap.L
 		} else {
 			req.Header.Set("X-Forwarded-For", clientIP)
 		}
-
-		// Set X-Forwarded-Proto
-		req.Header.Set("X-Forwarded-Proto", "https")
-
-		// Set X-Forwarded-Host
-		req.Header.Set("X-Forwarded-Host", originalHost)
 
 		// Handle authentication based on backend config
 		if backend.RequireAPIKey {

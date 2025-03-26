@@ -3,7 +3,6 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -31,6 +30,11 @@ func HandleRequest(cfg *model.Config, w http.ResponseWriter, r *http.Request) {
 				// Restore the body
 				combinedReader := io.MultiReader(bytes.NewReader(peeked), r.Body)
 				r.Body = io.NopCloser(combinedReader)
+
+				// Update ContentLength to account for the peek operation
+				if r.ContentLength > 0 {
+					r.ContentLength = int64(n) + r.ContentLength
+				}
 			}
 		}
 	}
@@ -46,6 +50,12 @@ func HandleRequest(cfg *model.Config, w http.ResponseWriter, r *http.Request) {
 			r.Body, reqBody = utils.DrainAndCapture(r.Body, isStreaming)
 		} else {
 			r.Body, reqBody = utils.DrainBody(r.Body)
+		}
+
+		// Ensure ContentLength is set correctly after draining
+		if r.ContentLength > 0 && !isStreaming {
+			bodyBytes := []byte(reqBody)
+			r.ContentLength = int64(len(bodyBytes))
 		}
 
 		cfg.Logger.Debug("Incoming request",
@@ -223,8 +233,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request, cfg *model.Co
 				return
 			}
 			r.Body = io.NopCloser(bytes.NewBuffer(modifiedBody))
+			// Let Go calculate and handle Content-Length automatically
 			r.ContentLength = int64(len(modifiedBody))
-			r.Header.Set("Content-Length", fmt.Sprintf("%d", len(modifiedBody)))
+			// Don't set Content-Length header explicitly - let http.Client handle it
 
 			logger.Info("Routing model to new model", zap.String("originalModel", modelName), zap.String("newModel", newModelName))
 
@@ -238,6 +249,10 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request, cfg *model.Co
 		logger.Info("Routing request to default proxy", zap.String("model", modelName))
 
 		r.Body = io.NopCloser(bytes.NewBuffer(body))
+		// Let Go calculate and handle Content-Length automatically
+		r.ContentLength = int64(len(body))
+		// Don't set Content-Length header explicitly - let http.Client handle it
+
 		proxy.DefaultProxy.ServeHTTP(w, r)
 		return
 	}
@@ -252,6 +267,9 @@ func routeRequestThroughProxy(r *http.Request, w http.ResponseWriter, logger *za
 		logger.Info("Routing request",
 			zap.String("path", r.URL.Path),
 			zap.String("method", r.Method))
+
+		// We don't modify the body here, so we don't need to adjust Content-Length
+		// Let the http.Client and our custom transport handle it
 
 		proxy.DefaultProxy.ServeHTTP(w, r)
 	} else {
