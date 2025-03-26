@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -34,7 +35,12 @@ func DrainBody(body io.ReadCloser) (io.ReadCloser, string) {
 		return nil, ""
 	}
 
-	bodyBytes, _ := io.ReadAll(body)
+	bodyBytes, err := io.ReadAll(body)
+	if err != nil {
+		// If we can't read the body, return the original and an error message
+		return body, fmt.Sprintf("Error reading body: %v", err)
+	}
+
 	// Create new ReadClosers for the drained body
 	return io.NopCloser(bytes.NewBuffer(bodyBytes)), formatJSON(bodyBytes)
 }
@@ -162,17 +168,27 @@ func DrainAndCapture(body io.ReadCloser, isStreaming bool) (io.ReadCloser, strin
 	if isStreaming {
 		// Read only first 1KB to avoid breaking the stream
 		peeked := make([]byte, 1024)
-		n, _ := body.Read(peeked)
+		n, err := body.Read(peeked)
+		if err != nil && err != io.EOF {
+			// If we can't read the body, return the original and an error message
+			return body, fmt.Sprintf("Error peeking at streaming body: %v", err)
+		}
+
 		if n > 0 {
 			peeked = peeked[:n]
 			combinedReader := io.MultiReader(bytes.NewReader(peeked), body)
 			return io.NopCloser(combinedReader), "STREAMING: " + formatJSON(peeked) + "..."
 		}
-		return body, "STREAMING CONTENT"
+		return body, "STREAMING CONTENT (empty or could not be sampled)"
 	}
 
 	// For non-streaming content, buffer everything
-	bodyBytes, _ := io.ReadAll(body)
+	bodyBytes, err := io.ReadAll(body)
+	if err != nil {
+		// If we can't read the body, return the original and an error message
+		return body, fmt.Sprintf("Error reading body: %v", err)
+	}
+
 	return io.NopCloser(bytes.NewBuffer(bodyBytes)), formatJSON(bodyBytes)
 }
 
